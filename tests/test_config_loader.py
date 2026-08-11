@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -215,4 +216,5 @@ def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.Monk
 
     loader.persist_current()
 
-    assert target.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert target.stat().st_mode & 0o777 == 0o600

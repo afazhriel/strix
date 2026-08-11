@@ -55,7 +55,8 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
         if not ws_subdir or not host_path:
             continue
         resolved = Path(host_path).expanduser().resolve()
-        target = f"{_WORKSPACE_ROOT}/{ws_subdir}"
+        ws_subdir_posix = Path(ws_subdir).as_posix()
+        target = f"{_WORKSPACE_ROOT}/{ws_subdir_posix}"
         bind_mounts.append({"source": str(resolved), "target": target, "read_only": False})
         if src.get("protect_metadata"):
             bind_mounts.extend(_metadata_mounts(resolved, target))
@@ -69,7 +70,8 @@ def build_manifest_entries(local_sources: list[dict[str, Any]]) -> dict[str | Pa
         host_path = src.get("source_path") or ""
         if not ws_subdir or not host_path:
             continue
-        entries[ws_subdir] = LocalDir(src=Path(host_path).expanduser().resolve())
+        ws_subdir_posix = Path(ws_subdir).as_posix()
+        entries[ws_subdir_posix] = LocalDir(src=Path(host_path).expanduser().resolve())
     return entries
 
 

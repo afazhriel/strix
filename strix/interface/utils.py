@@ -1396,6 +1396,10 @@ def check_mountable_dir(path: Path) -> None:
     if os.name == "nt":
         drive = Path(resolved.anchor)
         tree_roots |= {str(drive / name) for name in _FORBIDDEN_WINDOWS_TREE_NAMES}
+        if "SystemRoot" in os.environ:
+            tree_roots.add(os.environ["SystemRoot"])
+        if "ProgramFiles" in os.environ:
+            tree_roots.add(os.environ["ProgramFiles"])
         exact.add(str(drive / "Users").casefold())
     trees = [Path(root) for root in tree_roots] + [Path(root).resolve() for root in tree_roots]
     if (
@@ -1419,6 +1423,18 @@ def check_mountable_dir(path: Path) -> None:
         )
 
 
+def _dedupe_key(path: str) -> str:
+    # Windows path comparisons must be case-insensitive: "C:\Repo" and
+    # "c:\repo" are the same directory and must not become two bind mounts
+    # of the same tree. POSIX keys are the raw strings, unchanged.
+    if os.name != "nt":
+        return path
+    try:
+        return str(Path(path).expanduser().resolve()).casefold()
+    except (OSError, RuntimeError):
+        return str(Path(path).expanduser()).casefold()
+
+
 def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     seen_paths: set[str] = set()
@@ -1428,8 +1444,9 @@ def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, A
         if target.get("type") != "local_code" or not path:
             result.append(target)
             continue
-        if path not in seen_paths:
-            seen_paths.add(path)
+        key = _dedupe_key(path)
+        if key not in seen_paths:
+            seen_paths.add(key)
             result.append(target)
     return result
 
@@ -1577,29 +1594,76 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         ) from e
 
 
+def print_sandbox_unavailable(reason: str) -> None:
+    """Print the panel shown when the Strix Docker sandbox cannot be used.
+
+    Strix is still installed and functioning; only local sandboxed pentesting
+    needs Docker. The message explains that, lists the available next steps
+    (start Docker Desktop / the daemon, managed cloud, host-side features),
+    and never implies a host-execution fallback exists.
+    """
+    console = Console()
+    error_text = Text()
+    error_text.append("DOCKER SANDBOX UNAVAILABLE", style="bold red")
+    error_text.append("\n\n", style="white")
+    error_text.append(
+        "Docker sandbox is unavailable on this "
+        + ("Windows host." if os.name == "nt" else "host."),
+        style="bold #eab308",
+    )
+    error_text.append(f"\n\n{reason}\n", style="white")
+    error_text.append(
+        "\nLocal autonomous pentesting requires the Strix Docker sandbox.\n",
+        style="white",
+    )
+    error_text.append(
+        "Strix itself is installed and functioning. Host-side features such as ",
+        style="white",
+    )
+    error_text.append("strix view", style="bold cyan")
+    error_text.append(" and ", style="white")
+    error_text.append("strix auth", style="bold cyan")
+    error_text.append(" remain available.\n", style="white")
+    error_text.append("\nAvailable options:\n", style="white")
+    if os.name == "nt":
+        error_text.append(
+            "1. Use Docker Desktop if local sandbox execution is required (PowerShell):\n",
+            style="white",
+        )
+        error_text.append('     Start-Process "Docker Desktop"\n', style="dim white")
+        error_text.append("   Confirm it is ready with:  docker info\n", style="dim white")
+    else:
+        error_text.append(
+            "1. Start the Docker daemon for local sandbox execution:\n",
+            style="white",
+        )
+        error_text.append("     systemctl start docker\n", style="dim white")
+        error_text.append("   Confirm it is ready with:  docker info\n", style="dim white")
+    error_text.append(
+        "2. Use Strix Managed Cloud if available (app.strix.ai) - no local Docker needed.\n",
+        style="white",
+    )
+    error_text.append("3. Continue using host-side Strix functionality.\n", style="white")
+
+    panel = Panel(
+        error_text,
+        title="[bold white]STRIX",
+        title_align="left",
+        border_style="red",
+        padding=(1, 2),
+    )
+    console.print("\n", panel, "\n")
+
+
 def check_docker_connection() -> Any:
     try:
         return docker.from_env()
     except DockerException:
-        console = Console()
-        error_text = Text()
-        error_text.append("DOCKER NOT AVAILABLE", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
-        error_text.append(
-            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
-            style="white",
+        logger.debug("Docker daemon unreachable", exc_info=True)
+        print_sandbox_unavailable(
+            "Docker is installed on this host, but the Docker daemon is not running."
         )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+        sys.exit(1)
 
 
 def image_exists(client: Any, image_name: str) -> bool:

@@ -1,6 +1,7 @@
 """Startup environment validation and Docker image management."""
 
 import logging
+import os
 import shutil
 import sys
 
@@ -12,6 +13,7 @@ from strix.config import codex, load_settings
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
+    print_sandbox_unavailable,
     process_pull_line,
 )
 
@@ -144,23 +146,11 @@ def validate_environment() -> None:
 def check_docker_installed() -> None:
     if shutil.which("docker") is None:
         logger.debug("Docker CLI not found in PATH")
-        console = Console()
-        error_text = Text()
-        error_text.append("DOCKER NOT INSTALLED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
-        error_text.append(
-            "Please install Docker and ensure the 'docker' command is available.\n\n", style="white"
-        )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n", panel, "\n")
+        if os.name == "nt":
+            reason = "Docker Desktop is not installed on this Windows host."
+        else:
+            reason = "The 'docker' CLI is not installed on this host."
+        print_sandbox_unavailable(reason)
         sys.exit(1)
     logger.debug("Docker CLI present")
 

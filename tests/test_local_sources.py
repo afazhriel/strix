@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
@@ -119,17 +120,17 @@ def test_workspace_mount_absent_leaves_local_sources_alone() -> None:
 
 
 def test_check_mountable_dir_rejects_system_root() -> None:
-    etc = Path("/etc")
-    if not etc.is_dir():
-        pytest.skip("no /etc on this platform")
+    system_root = Path(os.environ.get("SystemRoot", "C:\\Windows")) if os.name == "nt" else Path("/etc")
+    if not system_root.is_dir():
+        pytest.skip("no system root on this platform")
     with pytest.raises(ValueError, match="Refusing to mount"):
-        check_mountable_dir(etc)
+        check_mountable_dir(system_root)
 
 
 def test_check_mountable_dir_rejects_the_shared_home_root() -> None:
-    home_root = Path("/home")
+    home_root = Path("C:\\Users") if os.name == "nt" else next((p for p in (Path("/home"), Path("/Users")) if p.is_dir()), Path("/home"))
     if not home_root.is_dir():
-        pytest.skip("no /home on this platform")
+        pytest.skip("no shared home root on this platform")
     with pytest.raises(ValueError, match="Refusing to mount"):
         check_mountable_dir(home_root)
 
@@ -159,7 +160,12 @@ def test_check_mountable_dir_rejects_credential_subdirs(tmp_path: Path) -> None:
 
 
 def test_check_mountable_dir_rejects_system_subdirs() -> None:
-    system_subdir = next((p for p in (Path("/etc/ssl"), Path("/usr/bin")) if p.is_dir()), None)
+    candidates = (
+        (Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32", Path("C:\\Program Files"))
+        if os.name == "nt"
+        else (Path("/etc/ssl"), Path("/usr/bin"))
+    )
+    system_subdir = next((p for p in candidates if p.is_dir()), None)
     if system_subdir is None:
         pytest.skip("no system subdirectory on this platform")
     with pytest.raises(ValueError, match="Refusing to mount"):
@@ -177,8 +183,9 @@ def test_check_mountable_dir_accepts_a_project_under_the_home_root(
 
 
 def test_infer_target_type_applies_the_mount_policy() -> None:
+    system_dir = os.environ.get("SystemRoot", "C:\\Windows") if os.name == "nt" else "/etc"
     with pytest.raises(ValueError, match="Refusing to mount"):
-        infer_target_type("/etc")
+        infer_target_type(system_dir)
 
 
 def test_read_target_list_file_strips_blank_lines(tmp_path: Path) -> None:
@@ -247,3 +254,11 @@ def test_dedupe_collapses_the_same_path() -> None:
     assert dedupe_local_targets([_local_target("/repo"), _local_target("/repo")]) == [
         _local_target("/repo")
     ]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only: paths are case-insensitive")
+def test_dedupe_collapses_same_directory_in_mixed_case(tmp_path: Path) -> None:
+    first = _local_target(str(tmp_path))
+    second = _local_target(str(tmp_path).upper())
+
+    assert dedupe_local_targets([first, second]) == [first]
